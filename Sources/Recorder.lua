@@ -41,6 +41,7 @@ return function(ctx)
         "Committed", "HealthyEnemies", "Fog", "FlyingEnemies",
         "Broke", "SpeedyEnemies", "Quarantine", "JailedTowers", "Inflation"
     }
+    local auto_apply_started = false
 
     local mode_options = {
         "Easy", "Intermediate", "Molten", "Fallen", "Hardcore",
@@ -117,6 +118,13 @@ return function(ctx)
 
         StrategyHelper.save_pending_record(pending_record)
         return pending_record
+    end
+
+    local function create_strategy_name(raw_name)
+        if not StrategyHelper then
+            return raw_name
+        end
+        return StrategyHelper.ensure_unique_name(raw_name)
     end
 
     local function get_current_wave()
@@ -290,6 +298,15 @@ return function(ctx)
             modifiers = strategy_modifiers,
             actions = {}
         }
+    end
+
+    local function recorder_notify(desc, kind, time_value)
+        Window:Notify({
+            Title = "ADS",
+            Desc = desc,
+            Time = time_value or 4,
+            Type = kind or "normal"
+        })
     end
 
     local function resolve_tower_index(tower)
@@ -895,6 +912,12 @@ return function(ctx)
         local selected_mode = pending_strategy and pending_strategy.mode or ((detected_mode ~= "" and detected_mode) or mode_options[1])
         local selected_map = pending_strategy and pending_strategy.map or (detected_map or "")
         local selected_modifiers = pending_strategy and clone_list(pending_strategy.modifiers) or detected_modifiers
+        local selected_saved_file = pending_strategy and StrategyHelper and StrategyHelper.get_file_name(pending_strategy.name) or ""
+        local strategy_name_box
+        local mode_dropdown
+        local map_box
+        local modifier_dropdown
+        local saved_file_dropdown
 
         local has_mode = false
         for _, mode_name in ipairs(mode_options) do
@@ -907,9 +930,115 @@ return function(ctx)
             table.insert(mode_options, selected_mode)
         end
 
+        local function set_form_from_strategy(strategy)
+            if type(strategy) ~= "table" then
+                return
+            end
+
+            selected_strategy_name = strategy.name or selected_strategy_name
+            selected_mode = strategy.mode or selected_mode
+            selected_map = strategy.map or selected_map
+            selected_modifiers = clone_list(strategy.modifiers)
+
+            if strategy_name_box then
+                strategy_name_box:SetValue(selected_strategy_name)
+            end
+            if mode_dropdown then
+                mode_dropdown:SetValue(selected_mode)
+            end
+            if map_box then
+                map_box:SetValue(selected_map)
+            end
+            if modifier_dropdown then
+                modifier_dropdown:SetValue(selected_modifiers)
+            end
+        end
+
+        local function refresh_saved_file_dropdown()
+            if not StrategyHelper or not saved_file_dropdown then
+                return {}
+            end
+
+            local files = StrategyHelper.list_files()
+            saved_file_dropdown:Clear()
+
+            for _, file_name in ipairs(files) do
+                saved_file_dropdown:Add(file_name)
+            end
+
+            local found = false
+            for _, file_name in ipairs(files) do
+                if file_name == selected_saved_file then
+                    found = true
+                    break
+                end
+            end
+
+            if not found then
+                selected_saved_file = files[1] or ""
+            end
+
+            if selected_saved_file ~= "" then
+                saved_file_dropdown:SetValue(selected_saved_file)
+            end
+
+            return files
+        end
+
         RecorderTab:Section({Title = "Recording Setup"})
 
-        RecorderTab:Textbox({
+        saved_file_dropdown = RecorderTab:Dropdown({
+            Title = "Saved JSON",
+            Desc = "Choose a saved setup/record from the Strategies folder",
+            List = StrategyHelper and StrategyHelper.list_files() or {},
+            Value = selected_saved_file ~= "" and selected_saved_file or nil,
+            Callback = function(choice)
+                local selected = type(choice) == "table" and choice[1] or choice
+                if selected == "--" then
+                    selected = ""
+                end
+                selected_saved_file = selected or ""
+            end
+        })
+
+        RecorderTab:Button({
+            Title = "LOAD SAVED SETUP",
+            Desc = "Load the selected JSON into this recorder form",
+            Callback = function()
+                if not StrategyHelper then
+                    recorder_notify("Strategy helper failed to load.", "error")
+                    return
+                end
+
+                if selected_saved_file == "" then
+                    recorder_notify("Select a saved JSON first.", "error")
+                    return
+                end
+
+                local strategy, path_or_err = StrategyHelper.load_file(selected_saved_file, {
+                    allow_empty_actions = true
+                })
+                if not strategy then
+                    recorder_notify(path_or_err, "error")
+                    refresh_saved_file_dropdown()
+                    return
+                end
+
+                set_form_from_strategy(strategy)
+                recorder_notify("Loaded setup from " .. selected_saved_file)
+            end
+        })
+
+        RecorderTab:Button({
+            Title = "REFRESH SAVED FILES",
+            Desc = "",
+            Callback = function()
+                local files = refresh_saved_file_dropdown()
+                recorder_notify("Found " .. tostring(#files) .. " saved JSON file(s).")
+            end
+        })
+
+        strategy_name_box = RecorderTab:Textbox({
             Title = "Strategy Name",
             Desc = "Saved as a JSON file in the Strategies folder",
             Placeholder = "Example: Wasteland Chug 3",
@@ -920,7 +1049,7 @@ return function(ctx)
             end
         })
 
-        RecorderTab:Dropdown({
+        mode_dropdown = RecorderTab:Dropdown({
             Title = "Mode",
             Desc = "Pick the gamemode this recording is for",
             List = mode_options,
@@ -930,7 +1059,7 @@ return function(ctx)
             end
         })
 
-        RecorderTab:Textbox({
+        map_box = RecorderTab:Textbox({
             Title = "Map",
             Desc = "Required for normal survival recordings",
             Placeholder = "Example: Honey Valley",
@@ -941,7 +1070,7 @@ return function(ctx)
             end
         })
 
-        RecorderTab:Dropdown({
+        modifier_dropdown = RecorderTab:Dropdown({
             Title = "Modifiers",
             Desc = "Leave empty if the run has no modifiers",
             List = modifier_options,
@@ -952,27 +1081,19 @@ return function(ctx)
             end
         })
 
+        refresh_saved_file_dropdown()
+
         RecorderTab:Button({
             Title = "CREATE NEW",
             Desc = "Save the lobby setup as a pending JSON strategy",
             Callback = function()
                 if game_state ~= "LOBBY" then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Create New is only available in the lobby.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Create New is only available in the lobby.", "error")
                     return
                 end
 
                 if not StrategyHelper then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Strategy helper failed to load.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Strategy helper failed to load.", "error")
                     return
                 end
 
@@ -985,80 +1106,53 @@ return function(ctx)
                 )
 
                 if strategy.name == "" then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Enter a strategy name first.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Enter a strategy name first.", "error")
                     return
                 end
 
                 if strategy.mode == "" or strategy.mode == "--" then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Select a gamemode first.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Select a gamemode first.", "error")
                     return
                 end
 
                 if mode_uses_game_info(strategy.mode) and strategy.map == "" then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Enter a map before creating the recorder setup.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Enter a map before creating the recorder setup.", "error")
                     return
+                end
+
+                strategy.name = create_strategy_name(strategy.name)
+                selected_strategy_name = strategy.name
+                selected_saved_file = StrategyHelper.get_file_name(strategy.name)
+                if strategy_name_box then
+                    strategy_name_box:SetValue(strategy.name)
                 end
 
                 local path, err = StrategyHelper.save(strategy, strategy.name, {
                     allow_empty_actions = true
                 })
                 if not path then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = err or "Failed to save strategy JSON.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify(err or "Failed to save strategy JSON.", "error")
                     return
                 end
 
                 save_pending_record(strategy, false, strategy.skipGameInfo)
+                refresh_saved_file_dropdown()
 
-                Window:Notify({
-                    Title = "ADS",
-                    Desc = "Recorder setup saved to " .. path,
-                    Time = 4,
-                    Type = "normal"
-                })
+                recorder_notify("Recorder setup saved to " .. path)
             end
         })
 
         RecorderTab:Button({
-            Title = "JOIN MAP",
-            Desc = "Lobby only. Uses the saved setup to join the chosen mode, then continues in-game.",
+            Title = "APPLY STRAT",
+            Desc = "Lobby only. Reuses the old loop logic until the right map is found.",
             Callback = function()
                 if game_state ~= "LOBBY" then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Join Map is only available in the lobby.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Apply Strat is only available in the lobby.", "error")
                     return
                 end
 
                 if not StrategyHelper or not tds or type(tds.Mode) ~= "function" then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Recorder cannot access the matchmaking logic right now.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Recorder cannot access the matchmaking logic right now.", "error")
                     return
                 end
 
@@ -1071,58 +1165,43 @@ return function(ctx)
                 )
 
                 if strategy.name == "" then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Enter a strategy name first.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Enter a strategy name first.", "error")
                     return
                 end
 
                 if strategy.mode == "" or strategy.mode == "--" then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Select a gamemode first.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Select a gamemode first.", "error")
                     return
                 end
 
                 if mode_uses_game_info(strategy.mode) and strategy.map == "" then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Enter a map before joining.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Enter a map before applying the strategy.", "error")
                     return
+                end
+
+                strategy.name = create_strategy_name(strategy.name)
+                selected_strategy_name = strategy.name
+                selected_saved_file = StrategyHelper.get_file_name(strategy.name)
+                if strategy_name_box then
+                    strategy_name_box:SetValue(strategy.name)
                 end
 
                 local path, err = StrategyHelper.save(strategy, strategy.name, {
                     allow_empty_actions = true
                 })
                 if not path then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = err or "Failed to save strategy JSON.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify(err or "Failed to save strategy JSON.", "error")
                     return
                 end
 
-                save_pending_record(strategy, mode_uses_game_info(strategy.mode), strategy.skipGameInfo)
+                save_pending_record(strategy, true, strategy.skipGameInfo)
+                refresh_saved_file_dropdown()
 
-                Window:Notify({
-                    Title = "ADS",
-                    Desc = mode_uses_game_info(strategy.mode)
-                        and "Joining mode now. Map and modifiers will be applied in-game."
-                        or "Joining mode now.",
-                    Time = 4,
-                    Type = "normal"
-                })
+                recorder_notify(
+                    mode_uses_game_info(strategy.mode)
+                        and "Applying strategy now. It will keep retrying from the lobby until the right map is found."
+                        or "Applying strategy now."
+                )
 
                 task.spawn(function()
                     pcall(function()
@@ -1147,6 +1226,22 @@ return function(ctx)
             Recorder:Log("No pending lobby setup found. Using current match data.")
         end
 
+        if game_state == "LOBBY" and pending_record and pending_record.strategy and pending_record.shouldAutoJoin and not auto_apply_started then
+            auto_apply_started = true
+            Recorder:Log("Pending auto-apply loaded. Queueing mode join...")
+            task.spawn(function()
+                task.wait(1)
+                local ok, err = pcall(function()
+                    tds:Mode(pending_record.strategy.mode)
+                end)
+
+                if not ok then
+                    log_line("Failed to queue mode join: " .. tostring(err))
+                    auto_apply_started = false
+                end
+            end)
+        end
+
         if game_state == "GAME" and pending_record and pending_record.strategy then
             if pending_record.shouldAutoJoin and not pending_record.gameInfoApplied and not pending_record.strategy.skipGameInfo then
                 if tds and type(tds.GameInfo) == "function" then
@@ -1157,7 +1252,6 @@ return function(ctx)
                         end)
 
                         if ok then
-                            pending_record.shouldAutoJoin = false
                             pending_record.gameInfoApplied = true
                             StrategyHelper.save_pending_record(pending_record)
                             log_line("Pending map setup applied.")

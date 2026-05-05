@@ -174,6 +174,27 @@ function Helper.get_file_path(name)
     return Helper.StrategyFolder .. "/" .. Helper.get_file_name(name)
 end
 
+function Helper.file_exists(name)
+    if not isfile then
+        return false
+    end
+
+    return isfile(Helper.get_file_path(name))
+end
+
+function Helper.ensure_unique_name(name)
+    local base_name = sanitize_file_name(name)
+    local candidate = base_name
+    local index = 2
+
+    while Helper.file_exists(candidate) do
+        candidate = string.format("%s (%d)", base_name, index)
+        index += 1
+    end
+
+    return candidate
+end
+
 function Helper.get_display_name(file_name)
     if type(file_name) ~= "string" then
         return ""
