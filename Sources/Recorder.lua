@@ -309,6 +309,53 @@ return function(ctx)
         })
     end
 
+    local function save_strategy_file(strategy, use_unique_name)
+        if not StrategyHelper or type(strategy) ~= "table" then
+            return nil, "Strategy helper unavailable."
+        end
+
+        local data = copy_strategy_data(strategy)
+        if use_unique_name then
+            data.name = create_strategy_name(data.name)
+        end
+
+        local path, err = StrategyHelper.save(data, data.name, {
+            allow_empty_actions = true
+        })
+        if not path then
+            return nil, err
+        end
+
+        return data, path
+    end
+
+    local function apply_pending_game_info(strategy)
+        if not tds or type(tds.GameInfo) ~= "function" then
+            Recorder:Log("Pending setup exists, but GameInfo is unavailable.")
+            return false
+        end
+
+        Recorder:Log("Applying pending map and modifiers...")
+        task.spawn(function()
+            local ok, err = pcall(function()
+                tds:GameInfo(strategy.map, strategy.modifiers)
+            end)
+
+            if ok then
+                if pending_record and pending_record.strategy then
+                    pending_record.gameInfoApplied = true
+                    pending_record.shouldAutoJoin = false
+                    StrategyHelper.save_pending_record(pending_record)
+                end
+                log_line("Pending map setup applied.")
+            else
+                log_line("Failed to apply pending setup: " .. tostring(err))
+            end
+        end)
+
+        return true
+    end
+
     local function resolve_tower_index(tower)
         if typeof(tower) ~= "Instance" then
             return nil
@@ -1120,37 +1167,29 @@ return function(ctx)
                     return
                 end
 
-                strategy.name = create_strategy_name(strategy.name)
-                selected_strategy_name = strategy.name
-                selected_saved_file = StrategyHelper.get_file_name(strategy.name)
-                if strategy_name_box then
-                    strategy_name_box:SetValue(strategy.name)
-                end
-
-                local path, err = StrategyHelper.save(strategy, strategy.name, {
-                    allow_empty_actions = true
-                })
-                if not path then
-                    recorder_notify(err or "Failed to save strategy JSON.", "error")
+                local saved_strategy, path_or_err = save_strategy_file(strategy, true)
+                if not saved_strategy then
+                    recorder_notify(path_or_err or "Failed to save strategy JSON.", "error")
                     return
                 end
 
-                save_pending_record(strategy, false, strategy.skipGameInfo)
+                selected_strategy_name = saved_strategy.name
+                selected_saved_file = StrategyHelper.get_file_name(saved_strategy.name)
+                if strategy_name_box then
+                    strategy_name_box:SetValue(saved_strategy.name)
+                end
+
+                save_pending_record(saved_strategy, false, saved_strategy.skipGameInfo)
                 refresh_saved_file_dropdown()
 
-                recorder_notify("Recorder setup saved to " .. path)
+                recorder_notify("Recorder setup saved to " .. path_or_err)
             end
         })
 
         RecorderTab:Button({
             Title = "APPLY STRAT",
-            Desc = "Lobby only. Reuses the old loop logic until the right map is found.",
+            Desc = "Lobby joins the mode. In-game applies map/modifiers with the old logic.",
             Callback = function()
-                if game_state ~= "LOBBY" then
-                    recorder_notify("Apply Strat is only available in the lobby.", "error")
-                    return
-                end
-
                 if not StrategyHelper or not tds or type(tds.Mode) ~= "function" then
                     recorder_notify("Recorder cannot access the matchmaking logic right now.", "error")
                     return
@@ -1179,35 +1218,53 @@ return function(ctx)
                     return
                 end
 
-                strategy.name = create_strategy_name(strategy.name)
-                selected_strategy_name = strategy.name
-                selected_saved_file = StrategyHelper.get_file_name(strategy.name)
-                if strategy_name_box then
-                    strategy_name_box:SetValue(strategy.name)
-                end
-
-                local path, err = StrategyHelper.save(strategy, strategy.name, {
-                    allow_empty_actions = true
-                })
-                if not path then
-                    recorder_notify(err or "Failed to save strategy JSON.", "error")
+                local saved_strategy, path_or_err = save_strategy_file(strategy, false)
+                if not saved_strategy then
+                    recorder_notify(path_or_err or "Failed to save strategy JSON.", "error")
                     return
                 end
 
-                save_pending_record(strategy, true, strategy.skipGameInfo)
+                selected_strategy_name = saved_strategy.name
+                selected_saved_file = StrategyHelper.get_file_name(saved_strategy.name)
+                if strategy_name_box then
+                    strategy_name_box:SetValue(saved_strategy.name)
+                end
                 refresh_saved_file_dropdown()
 
-                recorder_notify(
-                    mode_uses_game_info(strategy.mode)
-                        and "Applying strategy now. It will keep retrying from the lobby until the right map is found."
-                        or "Applying strategy now."
-                )
+                if game_state == "LOBBY" then
+                    save_pending_record(saved_strategy, true, saved_strategy.skipGameInfo)
 
-                task.spawn(function()
-                    pcall(function()
-                        tds:Mode(strategy.mode)
+                    recorder_notify(
+                        mode_uses_game_info(saved_strategy.mode)
+                            and "Joining mode now. Map/modifier apply continues in-game."
+                            or "Joining mode now."
+                    )
+
+                    task.spawn(function()
+                        pcall(function()
+                            tds:Mode(saved_strategy.mode)
+                        end)
                     end)
-                end)
+                    return
+                end
+
+                if game_state == "GAME" then
+                    save_pending_record(saved_strategy, true, false)
+
+                    if saved_strategy.skipGameInfo then
+                        pending_record.shouldAutoJoin = false
+                        pending_record.gameInfoApplied = true
+                        StrategyHelper.save_pending_record(pending_record)
+                        recorder_notify("This mode does not use in-game map selection.")
+                        return
+                    end
+
+                    recorder_notify("Applying map/modifiers now.")
+                    apply_pending_game_info(saved_strategy)
+                    return
+                end
+
+                recorder_notify("Unsupported game state for Apply Strat.", "error")
             end
         })
 
@@ -1221,7 +1278,7 @@ return function(ctx)
         if pending_strategy then
             Recorder:Log("Pending strategy loaded: " .. tostring(pending_strategy.name))
         elseif game_state == "LOBBY" then
-            Recorder:Log("Create the setup here, then use Join Map.")
+            Recorder:Log("Create the setup here, then use Apply Strat.")
         else
             Recorder:Log("No pending lobby setup found. Using current match data.")
         end
@@ -1244,24 +1301,7 @@ return function(ctx)
 
         if game_state == "GAME" and pending_record and pending_record.strategy then
             if pending_record.shouldAutoJoin and not pending_record.gameInfoApplied and not pending_record.strategy.skipGameInfo then
-                if tds and type(tds.GameInfo) == "function" then
-                    Recorder:Log("Applying pending map and modifiers...")
-                    task.spawn(function()
-                        local ok, err = pcall(function()
-                            tds:GameInfo(pending_record.strategy.map, pending_record.strategy.modifiers)
-                        end)
-
-                        if ok then
-                            pending_record.gameInfoApplied = true
-                            StrategyHelper.save_pending_record(pending_record)
-                            log_line("Pending map setup applied.")
-                        else
-                            log_line("Failed to apply pending setup: " .. tostring(err))
-                        end
-                    end)
-                else
-                    Recorder:Log("Pending setup exists, but GameInfo is unavailable.")
-                end
+                apply_pending_game_info(pending_record.strategy)
             elseif pending_record.shouldAutoJoin then
                 pending_record.shouldAutoJoin = false
                 pending_record.gameInfoApplied = pending_record.strategy.skipGameInfo or pending_record.gameInfoApplied
@@ -1299,32 +1339,17 @@ return function(ctx)
             Desc = "",
             Callback = function()
                 if game_state ~= "GAME" then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Start recording after you are inside the match. Use Create New and Join Map in the lobby first.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Start recording after you are inside the match. Use Create New and Apply Strat first.", "error")
                     return
                 end
 
                 if not StrategyHelper then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "Strategy helper failed to load. Recorder cannot export JSON yet.",
-                        Time = 4,
-                        Type = "error"
-                    })
+                    recorder_notify("Strategy helper failed to load. Recorder cannot export JSON yet.", "error")
                     return
                 end
 
                 if Globals.record_strat then
-                    Window:Notify({
-                        Title = "ADS",
-                        Desc = "A recording is already running.",
-                        Time = 3,
-                        Type = "error"
-                    })
+                    recorder_notify("A recording is already running.", "error", 3)
                     return
                 end
 
