@@ -19,7 +19,7 @@ A comprehensive Luau library designed to streamline and automate match logic for
 
 ## 📖 In-Depth Usage & Options
 
-For detailed implementation of complex methods—including specific `data` strings for **SetOption**, **Ability** names, and **Targeting** modes—please refer to the [Official Documentation](https://github.com/DuxiiT/auto-strat/blob/main/docs).
+For detailed implementation of complex methods—including specific `data` strings for **SetOption**, **Ability** names, and **Targeting** modes—please refer to the [Official Documentation](https://github.com/Shonkyyy/Auto_Strat/blob/main/docs).
 
 * **`SetTarget`**: Use this to optimize damage by switching towers to `"Strong"` for bosses or `"Last"` for specific leak control.
 * **`SetOption`**: Essential for towers like the **Mercenary Base** where unit selection is required.

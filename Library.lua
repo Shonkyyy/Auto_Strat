@@ -210,6 +210,7 @@ local DefaultSettings = {
     StreamerName = "",
     tagName = "None",
     Modifiers = {},
+    SelectedStrategyFile = "",
 }
 
 local TimeScaleValues = {0.5, 1, 1.5, 2}
@@ -287,6 +288,18 @@ local UpgradeHistory = {}
 -- // shared for addons
 shared.TDSTable = TDS
 shared["TDS_Table"] = TDS
+
+local StrategyHelper = shared.ADSStrategyHelper
+if not StrategyHelper then
+    local ok, helper = pcall(function()
+        return loadstring(game:HttpGet("https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Sources/StrategyHelper.lua"))()
+    end)
+
+    if ok and type(helper) == "table" then
+        StrategyHelper = helper
+        shared.ADSStrategyHelper = helper
+    end
+end
 
 -- // load & save
 local function SaveSettings()
@@ -1090,7 +1103,7 @@ local function StartEasyMode()
 
         while Globals.Easy and content == nil do
             local success, res = pcall(function() 
-                return game:HttpGet("https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Easy.lua") 
+                return game:HttpGet("https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Strategies/Easy.lua")
             end)
 
             if success and type(res) == "string" then
@@ -1121,7 +1134,7 @@ local function StartEasyMode()
 end
 
 -- // ui
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Sources/UI.lua"))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Sources/UI.lua"))()
 
 local Window = Library:Window({
     Title = "Aether Hub",
@@ -2065,7 +2078,153 @@ end
 
 Window:Line()
 
+local function NotifyStrategyError(message)
+    Window:Notify({
+        Title = "ADS",
+        Desc = message,
+        Time = 4,
+        Type = "error"
+    })
+end
+
+local function ExecuteStrategyPayload(strategy_data)
+    if not StrategyHelper then
+        NotifyStrategyError("Strategy helper failed to load.")
+        return false
+    end
+
+    local code, normalized_or_err = StrategyHelper.build_lua(strategy_data)
+    if not code then
+        NotifyStrategyError(normalized_or_err)
+        return false
+    end
+
+    local fn, load_err = loadstring(code)
+    if not fn then
+        NotifyStrategyError("Failed to compile strategy: " .. tostring(load_err))
+        return false
+    end
+
+    local normalized = normalized_or_err
+    task.spawn(function()
+        local ok, run_err = pcall(fn)
+        if not ok then
+            NotifyStrategyError("Strategy execution failed: " .. tostring(run_err))
+        end
+    end)
+
+    Window:Notify({
+        Title = "ADS",
+        Desc = "Running strategy: " .. normalized.name,
+        Time = 3,
+        Type = "normal"
+    })
+
+    return true
+end
+
+local function RefreshStrategyDropdown(dropdown)
+    if not dropdown then
+        return {}
+    end
+
+    dropdown:Clear()
+
+    if not StrategyHelper then
+        SetSetting("SelectedStrategyFile", "")
+        return {}
+    end
+
+    local files = StrategyHelper.list_files()
+    for _, file_name in ipairs(files) do
+        dropdown:Add(file_name)
+    end
+
+    local selected = Globals.SelectedStrategyFile or ""
+    local found = false
+    for _, file_name in ipairs(files) do
+        if file_name == selected then
+            found = true
+            break
+        end
+    end
+
+    if not found then
+        selected = files[1] or ""
+    end
+
+    Globals.SelectedStrategyFile = selected
+    SetSetting("SelectedStrategyFile", selected)
+
+    if selected ~= "" then
+        dropdown:SetValue(selected)
+    end
+
+    return files
+end
+
 local Strategies = Window:Tab({Title = "Strategies", Icon = "clipboard-list"}) do
+    Strategies:Section({Title = "Custom Strategy Files"})
+
+    local StrategyFileDropdown = Strategies:Dropdown({
+        Title = "Saved JSON",
+        Desc = "Select a recorded strategy file from the Strategies folder",
+        List = StrategyHelper and StrategyHelper.list_files() or {},
+        Value = Globals.SelectedStrategyFile ~= "" and Globals.SelectedStrategyFile or nil,
+        Callback = function(choice)
+            local selected = type(choice) == "table" and choice[1] or choice
+            if selected == "--" then
+                selected = ""
+            end
+
+            Globals.SelectedStrategyFile = selected or ""
+            SetSetting("SelectedStrategyFile", Globals.SelectedStrategyFile)
+        end
+    })
+
+    RefreshStrategyDropdown(StrategyFileDropdown)
+
+    Strategies:Button({
+        Title = "Refresh Strategy Files",
+        Desc = "",
+        Callback = function()
+            local files = RefreshStrategyDropdown(StrategyFileDropdown)
+            Window:Notify({
+                Title = "ADS",
+                Desc = "Found " .. tostring(#files) .. " saved JSON file(s).",
+                Time = 3,
+                Type = "normal"
+            })
+        end
+    })
+
+    Strategies:Button({
+        Title = "Run Selected JSON",
+        Desc = "",
+        Callback = function()
+            if not StrategyHelper then
+                NotifyStrategyError("Strategy helper failed to load.")
+                return
+            end
+
+            local selected = Globals.SelectedStrategyFile or ""
+            if selected == "" then
+                NotifyStrategyError("Select a saved JSON file first.")
+                return
+            end
+
+            local strategy_data, path_or_err = StrategyHelper.load_file(selected)
+            if not strategy_data then
+                NotifyStrategyError(path_or_err)
+                RefreshStrategyDropdown(StrategyFileDropdown)
+                return
+            end
+
+            ExecuteStrategyPayload(strategy_data)
+        end
+    })
+
+    Strategies:Section({Title = "Built-In Strategies"})
 
     Strategies:Section({Title = "Survival Strategies"})
     Strategies:Toggle({
@@ -2092,7 +2251,7 @@ local Strategies = Window:Tab({Title = "Strategies", Icon = "clipboard-list"}) d
 
             if v then
                 task.spawn(function()
-                    local url = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Fallen.lua"
+                    local url = "https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Strategies/Fallen.lua"
                     local content = game:HttpGet(url)
 
                     while not (TDS and TDS.Loadout) do
@@ -2118,7 +2277,7 @@ local Strategies = Window:Tab({Title = "Strategies", Icon = "clipboard-list"}) d
 
             if v then
                 task.spawn(function()
-                    local url = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Intermediate.lua"
+                    local url = "https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Strategies/Intermediate.lua"
                     local content = game:HttpGet(url)
 
                     while not (TDS and TDS.Loadout) do
@@ -2144,7 +2303,7 @@ local Strategies = Window:Tab({Title = "Strategies", Icon = "clipboard-list"}) d
 
             if v then
                 task.spawn(function()
-                    local url = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Casual.lua"
+                    local url = "https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Strategies/Casual.lua"
                     local content = game:HttpGet(url)
 
                     while not (TDS and TDS.Loadout) do
@@ -2170,7 +2329,7 @@ local Strategies = Window:Tab({Title = "Strategies", Icon = "clipboard-list"}) d
 
             if v then
                 task.spawn(function()
-                    local url = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Easy.lua"
+                    local url = "https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Strategies/Easy.lua"
                     local content = game:HttpGet(url)
 
                     while not (TDS and TDS.Loadout) do
@@ -2197,7 +2356,7 @@ local Strategies = Window:Tab({Title = "Strategies", Icon = "clipboard-list"}) d
 
             if v then
                 task.spawn(function()
-                    local url = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Hardcore.lua"
+                    local url = "https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Strategies/Hardcore.lua"
                     local content = game:HttpGet(url)
 
                     while not (TDS and TDS.Loadout) do
@@ -2227,14 +2386,16 @@ end
 
 Window:Line()
 
-local RecorderInit = loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Sources/Recorder.lua"))()
+local RecorderInit = loadstring(game:HttpGet("https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Sources/Recorder.lua"))()
 RecorderInit({
     Window = Window,
     ReplicatedStorage = ReplicatedStorage,
     LocalPlayer = LocalPlayer,
     HttpService = HttpService,
     GameState = GameState,
-    workspace = workspace
+    workspace = workspace,
+    ModifierList = AllModifiers,
+    TDS = TDS
 })
 
 Window:Line()

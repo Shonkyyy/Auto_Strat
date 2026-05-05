@@ -393,7 +393,7 @@ end
 current_equipped_towers = get_equipped_towers()
 
 -- // ui
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Sources/UI.lua"))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Sources/UI.lua"))()
 
 local Window = Library:Window({
     Title = "ADS",
@@ -812,7 +812,7 @@ local RecorderTab = Window:Tab({Title = "Recorder", Icon = "camera"}) do
 
             if writefile then 
                 local config_header = string.format([[
-local TDS = loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Library.lua"))()
+local TDS = loadstring(game:HttpGet("https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Library.lua"))()
 
 TDS:Loadout("%s", "%s", "%s", "%s", "%s")
 TDS:Mode("%s")
@@ -915,7 +915,7 @@ local Strategies = Window:Tab({Title = "Strategies", Icon = "newspaper"}) do
 
             if v then
                  task.spawn(function()
-                    local url = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Frost.lua"
+                    local url = "https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Strategies/Frost.lua"
                     local content = game:HttpGet(url)
                     
                     while not (TDS and TDS.Loadout) do
@@ -941,7 +941,7 @@ local Strategies = Window:Tab({Title = "Strategies", Icon = "newspaper"}) do
 
             if v then
                 task.spawn(function()
-                    local url = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Fallen.lua"
+                    local url = "https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Strategies/Fallen.lua"
                     local content = game:HttpGet(url)
                     
                     while not (TDS and TDS.Loadout) do
@@ -967,7 +967,7 @@ local Strategies = Window:Tab({Title = "Strategies", Icon = "newspaper"}) do
 
             if v then
                 task.spawn(function()
-                    local url = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Easy.lua"
+                    local url = "https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Strategies/Easy.lua"
                     local content = game:HttpGet(url)
                     
                     while not (TDS and TDS.Loadout) do

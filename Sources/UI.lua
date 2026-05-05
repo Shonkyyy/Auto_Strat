@@ -218,7 +218,7 @@ do
 		end
 	end
 
-	local IconList = loadstring(game:HttpGet('https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Sources/Icons.lua'))()
+	local IconList = loadstring(game:HttpGet('https://raw.githubusercontent.com/Shonkyyy/Auto_Strat/main/Sources/Icons.lua'))()
 	function gl(i)
 		local iconData = IconList.Icons[i]
 		if iconData then
