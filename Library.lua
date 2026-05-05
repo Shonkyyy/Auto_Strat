@@ -2801,19 +2801,51 @@ end
 
 local function CastModifierVote(ModsTable)
     local BulkModifiers = ReplicatedStorage:WaitForChild("Network"):WaitForChild("Modifiers"):WaitForChild("RF:BulkVoteModifiers")
+    local ModRep = ReplicatedStorage:WaitForChild("StateReplicators"):FindFirstChild("ModifierReplicator")
 
-    local SelectedMods = {}
-
-    if ModsTable and #ModsTable > 0 then
-        for _, modName in ipairs(ModsTable) do
-            SelectedMods[modName] = true
+    local Available = {}
+    if ModRep then
+        local raw = ModRep:GetAttribute("Available")
+        if type(raw) == "string" then
+            local clean = raw:match("{.+}")
+            if clean then
+                pcall(function()
+                    Available = HttpService:JSONDecode(clean)
+                end)
+            end
         end
     end
 
-    pcall(function()
-        BulkModifiers:InvokeServer(SelectedMods)
-        Logger:Log("Successfully casted modifier votes.")
-    end)
+    local SelectedMods = {}
+    local missingMods = {}
+
+    if ModsTable then
+        for k, v in pairs(ModsTable) do
+            local modName = type(k) == "string" and k or v
+            
+            if type(modName) == "string" then
+                if Available[modName] == true then
+                    SelectedMods[modName] = true
+                else
+                    table.insert(missingMods, modName)
+                end
+            end
+        end
+    end
+
+    if #missingMods > 0 then
+        Window:Notify({
+            Title = "ADS",
+            Desc = "Locked Modifiers: " .. table.concat(missingMods, ", "),
+            Time = 9999,
+            Type = "error"
+        })
+    elseif next(SelectedMods) then
+        pcall(function()
+            BulkModifiers:InvokeServer(SelectedMods)
+            Logger:Log("Successfully casted modifier votes.")
+        end)
+    end
 end
 
 local function IsMapAvailable(name)
@@ -3369,7 +3401,7 @@ function TDS:GameInfo(name, list)
     local VoteGui = PlayerGui:WaitForChild("ReactGameIntermission", 30)
     if not (VoteGui and VoteGui.Enabled and VoteGui:WaitForChild("Frame", 5)) then return end
 
-    local modifiers = (list and #list > 0) and list or Globals.Modifiers
+    local modifiers = (list and next(list)) and list or Globals.Modifiers
 
     CastModifierVote(modifiers)
 
